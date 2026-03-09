@@ -1,0 +1,90 @@
+import os
+import subprocess
+
+def run_cmd(cmd, cwd=None, ignore_error=False):
+    """ฟังก์ชันสำหรับรันคำสั่ง Terminal ผ่าน Python"""
+    print(f"กำลังรัน: {cmd}")
+    try:
+        subprocess.run(cmd, shell=True, check=True, cwd=cwd)
+    except subprocess.CalledProcessError as e:
+        if ignore_error:
+            print(f"[ข้าม] คำสั่งนี้อาจเคยทำงานไปแล้ว: {e}")
+        else:
+            print(f"[พัง] เกิดข้อผิดพลาด: {e}")
+            exit(1)
+
+print("=== เริ่มการทำ Lab อัตโนมัติด้วย Python ===")
+
+# 1. ดึงข้อมูล Account ID และ S3 Bucket Name
+print("\n--- 1. ดึงข้อมูล AWS ---")
+account_id = subprocess.check_output("aws sts get-caller-identity --query Account --output text", shell=True).decode('utf-8').strip()
+buckets_output = subprocess.check_output("aws s3 ls", shell=True).decode('utf-8').strip().split('\n')
+bucket_name = [line.split()[-1] for line in buckets_output if 's3bucket' in line][0]
+
+print(f"Account ID: {account_id}")
+print(f"Bucket Name: {bucket_name}")
+
+# 2. แก้ไขไฟล์ JSON (Task 3)
+print("\n--- 2. เตรียมไฟล์ JSON ---")
+json_path = os.path.expanduser('~/environment/resources/cafe_website_front_end_pipeline.json')
+with open(json_path, 'r') as file:
+    content = file.read()
+
+content = content.replace('<FMI_1>', account_id)
+content = content.replace('<FMI_2>', bucket_name)
+
+with open(json_path, 'w') as file:
+    file.write(content)
+
+# 3. สร้าง CodeCommit และ CodePipeline (Task 2 & 3)
+print("\n--- 3. สร้าง Repository และ Pipeline ---")
+# ใส่ ignore_error=True เพราะถ้าคุณ Champ เคยสร้างไปแล้ว (ได้ 15/25) โค้ดจะได้ไม่พังและทำงานต่อได้
+run_cmd('aws codecommit create-repository --repository-name front_end_website --repository-description "Repository for the cafe website front end"', ignore_error=True)
+
+resources_dir = os.path.expanduser('~/environment/resources')
+run_cmd('aws codepipeline create-pipeline --cli-input-json file://cafe_website_front_end_pipeline.json', cwd=resources_dir, ignore_error=True)
+
+# 4. จัดการ Git และ Commit (Task 4, 5, 6)
+print("\n--- 4. จัดการ Git เพื่อทำคะแนน Task 6A และ 6B ---")
+env_dir = os.path.expanduser('~/environment')
+repo_dir = os.path.join(env_dir, 'front_end_website')
+
+# ตั้งค่าชื่อและอีเมลสำหรับ Git
+run_cmd('git config --global user.name "Champ"')
+run_cmd('git config --global user.email "champ@example.com"')
+
+# Clone Repo ถ้ายังไม่มี
+if not os.path.exists(repo_dir):
+    run_cmd('git clone codecommit::us-east-1://front_end_website', cwd=env_dir)
+
+# --- Commit ที่ 1 (Task 2) ---
+test_html_path = os.path.join(repo_dir, 'test.html')
+with open(test_html_path, 'w') as file:
+    file.write('<!DOCTYPE html><html><head><title>Test page</title></head><body><h1>This is a sample HTML page.</h1></body></html>')
+
+run_cmd('git add test.html', cwd=repo_dir)
+run_cmd('git commit -m "This is my first commit."', cwd=repo_dir, ignore_error=True)
+run_cmd('git push origin main', cwd=repo_dir, ignore_error=True)
+
+# --- Commit ที่ 2 (Task 5) ---
+with open(test_html_path, 'w') as file:
+    file.write('<!DOCTYPE html><html><head><title>Best test page ever.</title></head><body><h1>This is a sample HTML page.</h1></body></html>')
+
+run_cmd('git add test.html', cwd=repo_dir)
+run_cmd('git commit -m "Updated the title"', cwd=repo_dir, ignore_error=True)
+run_cmd('git push origin main', cwd=repo_dir, ignore_error=True)
+
+# --- Commit ที่ 3 (Task 6 - ตัวทำคะแนนเต็ม) ---
+if os.path.exists(test_html_path):
+    os.remove(test_html_path)
+
+website_dir = os.path.join(env_dir, 'resources', 'website')
+if os.path.exists(website_dir):
+    run_cmd(f'cp -r {website_dir}/* {repo_dir}/')
+    run_cmd(f'rm -rf {website_dir}')
+
+run_cmd('git add .', cwd=repo_dir)
+run_cmd('git commit -m "Providing the website"', cwd=repo_dir, ignore_error=True)
+run_cmd('git push origin main', cwd=repo_dir)
+
+print("\n=== เรียบร้อย! รอสัก 1-2 นาทีให้ Pipeline ทำงาน แล้วกดปุ่ม Submit เพื่อตรวจคะแนนได้เลย ===")
